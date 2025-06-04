@@ -69,6 +69,53 @@ def generate_verb_with_openai(client, difficulty_level="beginner"):
         st.error(f"Error calling OpenAI API: {e}")
         return None
 
+# Function to check German sentence using OpenAI
+def check_german_sentence_with_openai(client, user_sentence, target_verb, difficulty_level="beginner"):
+    """Use OpenAI to evaluate the German sentence for grammar, structure, and correctness"""
+    
+    prompt = f"""
+    As a German language teacher, please evaluate this German sentence written by a {difficulty_level} level student:
+
+    Student's sentence: "{user_sentence}"
+    Target verb to use: "{target_verb}"
+
+    Please provide your evaluation in the following JSON format:
+
+    {{
+        "is_grammatically_correct": true/false,
+        "uses_target_verb_correctly": true/false,
+        "overall_score": "excellent/good/fair/needs_improvement",
+        "feedback": "Detailed feedback about grammar, verb usage, and suggestions for improvement",
+        "corrected_sentence": "If there are errors, provide a corrected version, otherwise repeat the original",
+        "english_translation": "English translation of the student's sentence (or corrected version)"
+    }}
+
+    Be encouraging but honest in your feedback. Point out specific grammar rules if there are mistakes.
+    Consider the difficulty level when evaluating - be more lenient with beginners.
+    """
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are an experienced German language teacher. Provide constructive, encouraging feedback while being accurate about grammar and usage. Always respond with valid JSON."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=500,
+            temperature=0.3  # Lower temperature for more consistent evaluation
+        )
+        
+        # Parse the JSON response
+        evaluation = json.loads(response.choices[0].message.content)
+        return evaluation
+        
+    except json.JSONDecodeError as e:
+        st.error(f"Error parsing sentence evaluation: {e}")
+        return None
+    except Exception as e:
+        st.error(f"Error evaluating sentence: {e}")
+        return None
+
 # Function to generate pronunciation audio using OpenAI TTS
 def generate_audio_with_openai(client, text, language="de"):
     """Generate audio pronunciation using OpenAI's TTS API"""
@@ -101,6 +148,8 @@ def init_session_state():
         st.session_state.translation_submitted = False
     if "sentence_submitted" not in st.session_state:
         st.session_state.sentence_submitted = False
+    if "sentence_evaluation" not in st.session_state:
+        st.session_state.sentence_evaluation = None
     if "correct_count" not in st.session_state:
         st.session_state.correct_count = 0
     if "wrong_count" not in st.session_state:
@@ -156,6 +205,17 @@ def main():
                 margin: 20px 0;
                 box-shadow: 0 4px 8px rgba(0,0,0,0.1);
             }
+            .evaluation-card {
+                background-color: #f8f9fa;
+                border-radius: 10px;
+                padding: 20px;
+                margin: 15px 0;
+                border-left: 4px solid #3498db;
+            }
+            .excellent { border-left-color: #2ecc71 !important; }
+            .good { border-left-color: #f39c12 !important; }
+            .fair { border-left-color: #e67e22 !important; }
+            .needs_improvement { border-left-color: #e74c3c !important; }
             .stTextInput>div>div>input {
                 border-radius: 20px !important;
                 padding: 12px 20px !important;
@@ -212,6 +272,7 @@ def main():
             st.session_state.current_verb_data = None
             st.session_state.translation_submitted = False
             st.session_state.sentence_submitted = False
+            st.session_state.sentence_evaluation = None
             st.session_state.user_translation = ""
             st.session_state.user_sentence = ""
     
@@ -224,7 +285,7 @@ def main():
     st.markdown("""
         <div class="header">
             <h1>🇩🇪 AI-Powered German Verb Practice</h1>
-            <p>Learn German verbs with AI-generated content and pronunciation</p>
+            <p>Learn German verbs with AI-generated content and intelligent sentence evaluation</p>
         </div>
     """, unsafe_allow_html=True)
     
@@ -329,24 +390,67 @@ def main():
             label_visibility="collapsed"
         )
         
-        # Check sentence button
-        if st.button("Check Sentence", key="check_sentence", use_container_width=True):
-            st.session_state.sentence_submitted = True
-            
-            # Simple validation - check if verb is present
-            if verb_data['german_verb'].lower() in user_sentence.lower():
-                st.success("✅ Great! The verb is used correctly in your sentence.")
+        # Check sentence button with AI evaluation
+        if st.button("🤖 Check Sentence with AI", key="check_sentence", use_container_width=True):
+            if user_sentence.strip():
+                st.session_state.sentence_submitted = True
                 
-                # Optional: Generate pronunciation for user's sentence
-                col1, col2 = st.columns([1, 1])
-                with col1:
-                    if st.button("🔊 Hear Your Sentence", key="user_sentence_audio"):
-                        with st.spinner("Generating pronunciation..."):
-                            audio_data = generate_audio_with_openai(client, user_sentence)
-                            if audio_data:
-                                st.audio(audio_data, format='audio/mp3')
+                with st.spinner("🧠 AI is evaluating your German sentence..."):
+                    evaluation = check_german_sentence_with_openai(
+                        client, 
+                        user_sentence, 
+                        verb_data['german_verb'], 
+                        st.session_state.difficulty_level
+                    )
+                    
+                    if evaluation:
+                        st.session_state.sentence_evaluation = evaluation
+                        
+                        # Display evaluation results
+                        score_class = evaluation['overall_score'].replace(' ', '_')
+                        
+                        st.markdown(f"""
+                            <div class="evaluation-card {score_class}">
+                                <h3>📝 AI Evaluation Results</h3>
+                                <p><strong>Overall Score:</strong> {evaluation['overall_score'].title()}</p>
+                                <p><strong>Grammar:</strong> {'✅ Correct' if evaluation['is_grammatically_correct'] else '❌ Needs improvement'}</p>
+                                <p><strong>Verb Usage:</strong> {'✅ Correct' if evaluation['uses_target_verb_correctly'] else '❌ Incorrect usage'}</p>
+                            </div>
+                        """, unsafe_allow_html=True)
+                        
+                        # Detailed feedback
+                        st.markdown("### 💡 Detailed Feedback")
+                        st.write(evaluation['feedback'])
+                        
+                        # Show corrected sentence if different
+                        if evaluation['corrected_sentence'].lower() != user_sentence.lower():
+                            st.markdown("### ✏️ Suggested Correction")
+                            st.info(f"**Corrected:** {evaluation['corrected_sentence']}")
+                        
+                        # Show English translation
+                        st.markdown("### 🇬🇧 English Translation")
+                        st.write(f"*{evaluation['english_translation']}*")
+                        
+                        # Audio for corrected sentence
+                        col1, col2 = st.columns([1, 1])
+                        with col1:
+                            if st.button("🔊 Hear Your Sentence", key="user_sentence_audio"):
+                                with st.spinner("Generating pronunciation..."):
+                                    audio_data = generate_audio_with_openai(client, user_sentence)
+                                    if audio_data:
+                                        st.audio(audio_data, format='audio/mp3')
+                        
+                        with col2:
+                            if evaluation['corrected_sentence'].lower() != user_sentence.lower():
+                                if st.button("🔊 Hear Corrected Version", key="corrected_sentence_audio"):
+                                    with st.spinner("Generating pronunciation..."):
+                                        audio_data = generate_audio_with_openai(client, evaluation['corrected_sentence'])
+                                        if audio_data:
+                                            st.audio(audio_data, format='audio/mp3')
+                    else:
+                        st.error("Could not evaluate the sentence. Please try again.")
             else:
-                st.warning(f"⚠️ The verb '{verb_data['german_verb']}' appears to be missing. Try again!")
+                st.warning("Please enter a German sentence first!")
     
     # Next verb button
     if st.session_state.translation_submitted and st.session_state.sentence_submitted:
@@ -357,6 +461,7 @@ def main():
             st.session_state.user_sentence = ""
             st.session_state.translation_submitted = False
             st.session_state.sentence_submitted = False
+            st.session_state.sentence_evaluation = None
             st.rerun()
     
     st.markdown("</div>", unsafe_allow_html=True)  # Close verb-card
@@ -365,7 +470,7 @@ def main():
     st.markdown("---")
     st.markdown("""
         <div style="text-align: center; margin-top: 30px; color: #7f8c8d; font-size: 14px;">
-            <p>🤖 AI-Powered German verb practice with OpenAI integration</p>
+            <p>🤖 AI-Powered German verb practice with intelligent sentence evaluation</p>
             <p>Built with Streamlit • 🇩🇪 Learn German Effectively</p>
         </div>
     """, unsafe_allow_html=True)
