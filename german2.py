@@ -154,6 +154,8 @@ def init_session_state():
         st.session_state.user_audio_data = None
     if "corrected_audio_data" not in st.session_state:
         st.session_state.corrected_audio_data = None
+    if "show_audio_buttons" not in st.session_state:
+        st.session_state.show_audio_buttons = False
     if "correct_count" not in st.session_state:
         st.session_state.correct_count = 0
     if "wrong_count" not in st.session_state:
@@ -411,6 +413,7 @@ def main():
                     
                     if evaluation:
                         st.session_state.sentence_evaluation = evaluation
+                        st.session_state.show_audio_buttons = True  # Enable audio buttons
                         
                         # Display evaluation results
                         score_class = evaluation['overall_score'].replace(' ', '_')
