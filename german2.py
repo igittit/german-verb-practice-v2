@@ -122,9 +122,9 @@ def generate_audio_with_openai(client, text, language="de"):
     try:
         response = client.audio.speech.create(
             model="tts-1",
-            voice="alloy",  # You can use: alloy, echo, fable, onyx, nova, shimmer
+            voice="onyx",  # Male voice - you can also use: echo (male), fable (male), alloy, nova, shimmer
             input=text,
-            speed=0.9  # Slightly slower for learning
+            speed=0.75  # Slower speed for better learning (25% slower than normal)
         )
         
         # Convert to base64 for embedding in HTML
