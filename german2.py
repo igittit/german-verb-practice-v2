@@ -5,122 +5,94 @@ from PIL import Image
 from io import BytesIO
 import json
 import time
+import openai
+from openai import OpenAI
+import requests
 
-# Sample German verb dictionary with image references
-verbs = {
-    "gehen": {
-        "english": "to go",
-        "image": "walking_path",
-        "sample_sentence": "Ich gehe ins Kino.",
-        "sample_translation": "I go to the cinema.",
-        "audio": "gehen"
-    },
-    "essen": {
-        "english": "to eat",
-        "image": "dining_table",
-        "sample_sentence": "Wir essen Pizza zum Abendessen.",
-        "sample_translation": "We eat pizza for dinner.",
-        "audio": "essen"
-    },
-    "trinken": {
-        "english": "to drink",
-        "image": "coffee_cup",
-        "sample_sentence": "Er trinkt einen Kaffee am Morgen.",
-        "sample_translation": "He drinks coffee in the morning.",
-        "audio": "trinken"
-    },
-    "lesen": {
-        "english": "to read",
-        "image": "open_book",
-        "sample_sentence": "Sie liest ein interessantes Buch.",
-        "sample_translation": "She reads an interesting book.",
-        "audio": "lesen"
-    },
-    "schreiben": {
-        "english": "to write",
-        "image": "writing_hand",
-        "sample_sentence": "Die Schüler schreiben einen Aufsatz.",
-        "sample_translation": "The students write an essay.",
-        "audio": "schreiben"
-    },
-    "sprechen": {
-        "english": "to speak",
-        "image": "conversation",
-        "sample_sentence": "Sprechen Sie Deutsch?",
-        "sample_translation": "Do you speak German?",
-        "audio": "sprechen"
-    }
-}
+# OpenAI Configuration
+def get_openai_client():
+    try:
+        # Try to get API key from Streamlit secrets first
+        api_key = st.secrets.get("OPENAI_API_KEY", None)
+        if not api_key:
+            # Fallback to user input if not in secrets
+            api_key = st.sidebar.text_input("Enter your OpenAI API Key:", type="password")
+            if not api_key:
+                st.error("Please provide your OpenAI API key to use this app.")
+                st.stop()
+        
+        client = OpenAI(api_key=api_key)
+        return client
+    except Exception as e:
+        st.error(f"Error initializing OpenAI client: {e}")
+        return None
 
-# Pre-recorded audio for verbs (base64 encoded)
-audio_files = {
-    "gehen": "data:audio/mpeg;base64,SUQzBAAAAAABEVRYWFgAAAAtAAADY29tbWVudABCaWdTb3VuZEJhbmsuY29tIC8gTGFTb25vdGhlcXVlLm9yZwBURU5DAAAAHQAAA1N3aXRjaCBQbHVzIMKpIE5DSCBTb2Z0d2FyZQBUSVQyAAAABgAAAzIyMzUAVFNTRQAAAA8AAANMYXZmNTcuODMuMTAwAAAAAAAAAAAAAAD/80DEAAAAA0gAAAAATEFNRTMuMTAwVVVVVVVVVVVVVUxBTUUzLjEwMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVf/zQsRbAAADSAAAAABVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVf/zQMSkAAADSAAAAABVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV",
-    "essen": "data:audio/mpeg;base64,SUQzBAAAAAABEVRYWFgAAAAtAAADY29tbWVudABCaWdTb3VuZEJhbmsuY29tIC8gTGFTb25vdGhlcXVlLm9yZwBURU5DAAAAHQAAA1N3aXRjaCBQbHVzIMKpIE5DSCBTb2Z0d2FyZQBUSVQyAAAABgAAAzIyMzUAVFNTRQAAAA8AAANMYXZmNTcuODMuMTAwAAAAAAAAAAAAAAD/80DEAAAAA0gAAAAATEFNRTMuMTAwVVVVVVVVVVVVVUxBTUUzLjEwMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVf/zQsRbAAADSAAAAABVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVf/zQMSkAAADSAAAAABVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV",
-    "trinken": "data:audio/mpeg;base64,SUQzBAAAAAABEVRYWFgAAAAtAAADY29tbWVudABCaWdTb3VuZEJhbmsuY29tIC8gTGFTb25vdGhlcXVlLm9yZwBURU5DAAAAHQAAA1N3aXRjaCBQbHVzIMKpIE5DSCBTb2Z0d2FyZQBUSVQyAAAABgAAAzIyMzUAVFNTRQAAAA8AAANMYXZmNTcuODMuMTAwAAAAAAAAAAAAAAD/80DEAAAAA0gAAAAATEFNRTMuMTAwVVVVVVVVVVVVVUxBTUUzLjEwMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVf/zQsRbAAADSAAAAABVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVf/zQMSkAAADSAAAAABVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV",
-    "lesen": "data:audio/mpeg;base64,SUQzBAAAAAABEVRYWFgAAAAtAAADY29tbWVudABCaWdTb3VuZEJhbmsuY29tIC8gTGFTb25vdGhlcXVlLm9yZwBURU5DAAAAHQAAA1N3aXRjaCBQbHVzIMKpIE5DSCBTb2Z0d2FyZQBUSVQyAAAABgAAAzIyMzUAVFNTRQAAAA8AAANMYXZmNTcuODMuMTAwAAAAAAAAAAAAAAD/80DEAAAAA0gAAAAATEFNRTMuMTAwVVVVVVVVVVVVVUxBTUUzLjEwMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVf/zQsRbAAADSAAAAABVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVf/zQMSkAAADSAAAAABVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVvvvvvvvvvvvvvvvvvvvvvvvvvV",
-    "schreiben": "data:audio/mpeg;base64,SUQzBAAAAAABEVRYWFgAAAAtAAADY29tbWVudABCaWdTb3VuZEJhbmsuY29tIC8gTGFTb25vdGhlcXVlLm9yZwBURU5DAAAAHQAAA1N3aXRjaCBQbHVzIMKpIE5DSCBTb2Z0d2FyZQBUSVQyAAAABgAAAzIyMzUAVFNTRQAAAA8AAANMYXZmNTcuODMuMTAwAAAAAAAAAAAAAAD/80DEAAAAA0gAAAAATEFNRTMuMTAwVVVVVVVVVVVVVUxBTUUzLjEwMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVf/zQsRbAAADSAAAAABVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVf/zQMSkAAADSAAAAABVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV",
-    "sprechen": "data:audio/mpeg;base64,SUQzBAAAAAABEVRYWFgAAAAtAAADY29tbWVudABCaWdTb3VuZEJhbmsuY29tIC8gTGFTb25vdGhlcXVlLm9yZwBURU5DAAAAHQAAA1N3aXRjaCBQbHVzIMKpIE5DSCBTb2Z0d2FyZQBUSVQyAAAABgAAAzIyMzUAVFNTRQAAAA8AAANMYXZmNTcuODMuMTAwAAAAAAAAAAAAAAD/80DEAAAAA0gAAAAATEFNRTMuMTAwVVVVVVVVVVVVVUxBTUUzLjEwMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVf/zQsRbAAADSAAAAABVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVf/zQMSkAAADSAAAAABVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV"
-}
+# Function to generate German verb data using OpenAI
+def generate_verb_with_openai(client, difficulty_level="beginner"):
+    """Generate a German verb with translations, example sentences, and image description using OpenAI"""
+    
+    prompt = f"""
+    Generate a random German verb suitable for {difficulty_level} level learners. 
+    Provide the response in the following JSON format:
 
-# Generate images
-def generate_image(image_type, width=300):
-    img = Image.new('RGB', (300, 200), color=(230, 240, 255))
-    
-    if image_type == "walking_path":
-        for i in range(0, 300, 20):
-            img.paste((100, 150, 100), (i, 150, i+10, 180))
-        img.paste((50, 50, 150), (150, 100, 160, 140))
-        img.paste((200, 0, 0), (145, 90, 155, 100))
-        return img
-    
-    elif image_type == "dining_table":
-        img.paste((139, 69, 19), (50, 120, 250, 130))
-        img.paste((255, 0, 0), (100, 80, 120, 100))
-        img.paste((0, 100, 0), (180, 80, 200, 100))
-        return img
-    
-    elif image_type == "coffee_cup":
-        img.paste((101, 67, 33), (120, 100, 180, 150))
-        img.paste((200, 150, 100), (125, 95, 175, 100))
-        img.paste((150, 100, 50), (180, 120, 190, 130))
-        return img
-    
-    elif image_type == "open_book":
-        img.paste((240, 230, 200), (100, 80, 200, 160))
-        img.paste((150, 100, 50), (95, 70, 100, 170))
-        for i in range(90, 170, 15):
-            img.paste((100, 80, 40), (105, i, 195, i+2))
-        return img
-    
-    elif image_type == "writing_hand":
-        img.paste((255, 220, 180), (150, 100, 180, 150))
-        img.paste((255, 220, 180), (180, 120, 220, 130))
-        img.paste((0, 0, 0), (200, 125, 230, 127))
-        img.paste((200, 200, 200), (120, 130, 200, 132))
-        return img
-    
-    elif image_type == "conversation":
-        img.paste((255, 255, 200), (0, 0, 300, 200))
-        img.paste((200, 230, 255), (70, 70, 130, 130))
-        img.paste((200, 230, 255), (170, 70, 230, 130))
-        img.paste((0, 0, 0), (90, 90, 100, 100))
-        img.paste((0, 0, 0), (190, 90, 200, 100))
-        img.paste((0, 0, 0), (80, 110, 120, 115))
-        img.paste((0, 0, 0), (180, 110, 220, 115))
-        return img
-    
-    return img
+    {{
+        "german_verb": "the German verb",
+        "english_translation": "the English translation (include 'to' for infinitive)",
+        "sample_sentence_german": "a simple German sentence using this verb",
+        "sample_sentence_english": "English translation of the German sentence",
+        "verb_category": "category like 'movement', 'daily_activities', 'communication', etc."
+    }}
 
-# Function to convert image to base64
-def img_to_base64(img):
-    buffered = BytesIO()
-    img.save(buffered, format="PNG")
-    return base64.b64encode(buffered.getvalue()).decode()
+    Make sure the verb is commonly used and appropriate for language learning.
+    Keep sentences simple and practical.
+    """
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a German language teacher creating educational content. Always respond with valid JSON."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=300,
+            temperature=0.7
+        )
+        
+        # Parse the JSON response
+        verb_data = json.loads(response.choices[0].message.content)
+        return verb_data
+        
+    except json.JSONDecodeError as e:
+        st.error(f"Error parsing OpenAI response: {e}")
+        return None
+    except Exception as e:
+        st.error(f"Error calling OpenAI API: {e}")
+        return None
+
+# Function to generate pronunciation audio using OpenAI TTS
+def generate_audio_with_openai(client, text, language="de"):
+    """Generate audio pronunciation using OpenAI's TTS API"""
+    try:
+        response = client.audio.speech.create(
+            model="tts-1",
+            voice="alloy",  # You can use: alloy, echo, fable, onyx, nova, shimmer
+            input=text,
+            speed=0.9  # Slightly slower for learning
+        )
+        
+        # Convert to base64 for embedding in HTML
+        audio_data = response.content
+        audio_base64 = base64.b64encode(audio_data).decode()
+        return f"data:audio/mpeg;base64,{audio_base64}"
+        
+    except Exception as e:
+        st.error(f"Error generating audio: {e}")
+        return None
 
 # Initialize session state
 def init_session_state():
-    if "current_verb" not in st.session_state:
-        st.session_state.current_verb = random.choice(list(verbs.keys()))
+    if "current_verb_data" not in st.session_state:
+        st.session_state.current_verb_data = None
     if "user_translation" not in st.session_state:
         st.session_state.user_translation = ""
     if "user_sentence" not in st.session_state:
@@ -135,18 +107,18 @@ def init_session_state():
         st.session_state.wrong_count = 0
     if "total_count" not in st.session_state:
         st.session_state.total_count = 0
-    if "recording" not in st.session_state:
-        st.session_state.recording = False
-    if "recorded_audio" not in st.session_state:
-        st.session_state.recorded_audio = None
+    if "difficulty_level" not in st.session_state:
+        st.session_state.difficulty_level = "beginner"
+    if "loading" not in st.session_state:
+        st.session_state.loading = False
 
 # Main app
 def main():
     st.set_page_config(
-        page_title="German Verb Practice", 
+        page_title="AI-Powered German Verb Practice", 
         page_icon="🇩🇪", 
         layout="centered",
-        initial_sidebar_state="collapsed"
+        initial_sidebar_state="expanded"
     )
     
     # Custom CSS
@@ -184,51 +156,6 @@ def main():
                 margin: 20px 0;
                 box-shadow: 0 4px 8px rgba(0,0,0,0.1);
             }
-            .image-container {
-                display: flex;
-                justify-content: center;
-                margin: 20px 0;
-                border-radius: 10px;
-                overflow: hidden;
-                border: 3px solid #f0f2f6;
-            }
-            .button-row {
-                display: flex;
-                justify-content: center;
-                gap: 20px;
-                margin: 20px 0;
-            }
-            .audio-btn {
-                border: none;
-                border-radius: 50%;
-                width: 60px;
-                height: 60px;
-                font-size: 24px;
-                cursor: pointer;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-                transition: all 0.3s ease;
-            }
-            .audio-btn:hover {
-                transform: scale(1.1);
-                box-shadow: 0 6px 8px rgba(0,0,0,0.15);
-            }
-            .green-btn {
-                background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%);
-                color: white;
-            }
-            .red-btn {
-                background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
-                color: white;
-            }
-            .footer {
-                text-align: center;
-                margin-top: 30px;
-                color: #7f8c8d;
-                font-size: 14px;
-            }
             .stTextInput>div>div>input {
                 border-radius: 20px !important;
                 padding: 12px 20px !important;
@@ -253,16 +180,51 @@ def main():
                 transform: translateY(-2px);
                 box-shadow: 0 4px 8px rgba(0,0,0,0.2);
             }
+            .loading {
+                text-align: center;
+                color: #3498db;
+                font-size: 18px;
+                margin: 20px 0;
+            }
         </style>
     """, unsafe_allow_html=True)
     
     init_session_state()
     
+    # Sidebar for settings
+    with st.sidebar:
+        st.header("⚙️ Settings")
+        
+        # Difficulty level selection
+        difficulty = st.selectbox(
+            "Select Difficulty Level:",
+            ["beginner", "intermediate", "advanced"],
+            index=["beginner", "intermediate", "advanced"].index(st.session_state.difficulty_level)
+        )
+        st.session_state.difficulty_level = difficulty
+        
+        st.markdown("---")
+        st.markdown("### 🔑 API Setup")
+        st.markdown("You need an OpenAI API key to use this app.")
+        st.markdown("[Get your API key here](https://platform.openai.com/api-keys)")
+        
+        if st.button("🔄 Generate New Verb", use_container_width=True):
+            st.session_state.current_verb_data = None
+            st.session_state.translation_submitted = False
+            st.session_state.sentence_submitted = False
+            st.session_state.user_translation = ""
+            st.session_state.user_sentence = ""
+    
+    # Initialize OpenAI client
+    client = get_openai_client()
+    if not client:
+        return
+    
     # Header
     st.markdown("""
         <div class="header">
-            <h1>🇩🇪 German Verb Practice</h1>
-            <p>Learn German verbs with visual references and pronunciation practice</p>
+            <h1>🇩🇪 AI-Powered German Verb Practice</h1>
+            <p>Learn German verbs with AI-generated content and pronunciation</p>
         </div>
     """, unsafe_allow_html=True)
     
@@ -284,50 +246,44 @@ def main():
         </div>
     """, unsafe_allow_html=True)
     
-    # Verb card
-    current_verb = st.session_state.current_verb
-    verb_data = verbs[current_verb]
+    # Generate verb data if not exists
+    if st.session_state.current_verb_data is None:
+        with st.spinner("🤖 Generating new German verb with AI..."):
+            verb_data = generate_verb_with_openai(client, st.session_state.difficulty_level)
+            if verb_data:
+                st.session_state.current_verb_data = verb_data
+            else:
+                st.error("Failed to generate verb data. Please try again.")
+                return
     
+    verb_data = st.session_state.current_verb_data
+    
+    # Verb card
     st.markdown(f"""
         <div class="verb-card">
-            <h2 style="text-align: center; color: #2c3e50;">What does the German verb '<b>{current_verb}</b>' mean in English?</h2>
-    """, unsafe_allow_html=True)
-    
-    # Generate and display image
-    img = generate_image(verb_data["image"])
-    img_base64 = img_to_base64(img)
-    st.markdown(f"""
-        <div class="image-container">
-            <img src="data:image/png;base64,{img_base64}" width="300">
-        </div>
+            <h2 style="text-align: center; color: #2c3e50;">What does the German verb '<b>{verb_data['german_verb']}</b>' mean in English?</h2>
+            <p style="text-align: center; color: #7f8c8d;">Category: {verb_data.get('verb_category', 'General')}</p>
     """, unsafe_allow_html=True)
     
     # Audio buttons
     col1, col2 = st.columns([1, 1])
     with col1:
-        if st.button("▶️ Listen to Word", key="play_audio", 
-                    use_container_width=True, 
-                    help="Listen to the pronunciation of the word"):
-            # Play audio when button is clicked
-            audio_html = f"""
-            <audio autoplay>
-                <source src="{audio_files[current_verb]}" type="audio/mpeg">
-            </audio>
-            """
-            st.components.v1.html(audio_html, height=0)
+        if st.button("🔊 Listen to Pronunciation", key="play_audio", use_container_width=True):
+            with st.spinner("Generating pronunciation..."):
+                audio_data = generate_audio_with_openai(client, verb_data['german_verb'])
+                if audio_data:
+                    st.audio(audio_data, format='audio/mp3')
+                else:
+                    st.error("Could not generate audio pronunciation.")
     
     with col2:
-        if st.button("🎤 Repeat Word", key="repeat_audio", 
-                    use_container_width=True, 
-                    help="Repeat the word after hearing it"):
-            # Play audio and prompt user to repeat
-            st.info(f"🎵 Playing audio for '{current_verb}'. Please repeat the word!")
-            audio_html = f"""
-            <audio autoplay>
-                <source src="{audio_files[current_verb]}" type="audio/mpeg">
-            </audio>
-            """
-            st.components.v1.html(audio_html, height=0)
+        if st.button("🗣️ Listen to Sentence", key="sentence_audio", use_container_width=True):
+            with st.spinner("Generating sentence pronunciation..."):
+                audio_data = generate_audio_with_openai(client, verb_data['sample_sentence_german'])
+                if audio_data:
+                    st.audio(audio_data, format='audio/mp3')
+                else:
+                    st.error("Could not generate sentence audio.")
     
     # Translation input
     user_translation = st.text_input(
@@ -339,24 +295,30 @@ def main():
     )
     
     # Check translation button
-    if st.button("Check Translation", key="check_translation", 
-                use_container_width=True, 
-                help="Check if your translation is correct"):
+    if st.button("Check Translation", key="check_translation", use_container_width=True):
         st.session_state.translation_submitted = True
         st.session_state.total_count += 1
         
-        if user_translation.strip().lower() == verb_data["english"]:
+        # More flexible matching
+        correct_answer = verb_data["english_translation"].lower().strip()
+        user_answer = user_translation.lower().strip()
+        
+        # Check for partial matches (remove "to" for comparison)
+        correct_clean = correct_answer.replace("to ", "").strip()
+        user_clean = user_answer.replace("to ", "").strip()
+        
+        if user_clean == correct_clean or user_answer == correct_answer:
             st.session_state.correct_count += 1
             st.success("✅ Correct! Well done!")
         else:
             st.session_state.wrong_count += 1
-            st.error(f"❌ Incorrect. The correct meaning is: **{verb_data['english']}**")
+            st.error(f"❌ Incorrect. The correct meaning is: **{verb_data['english_translation']}**")
     
     # Sentence section
     if st.session_state.translation_submitted:
         st.markdown("---")
-        st.subheader(f"Use '{current_verb}' in a German sentence")
-        st.info(f"**Example:** {verb_data['sample_sentence']}  \n*({verb_data['sample_translation']})*")
+        st.subheader(f"Use '{verb_data['german_verb']}' in a German sentence")
+        st.info(f"**Example:** {verb_data['sample_sentence_german']}  \n*({verb_data['sample_sentence_english']})*")
         
         user_sentence = st.text_area(
             "Your German sentence:", 
@@ -368,29 +330,33 @@ def main():
         )
         
         # Check sentence button
-        if st.button("Check Sentence", key="check_sentence", 
-                    use_container_width=True, 
-                    help="Check if your sentence uses the verb correctly"):
+        if st.button("Check Sentence", key="check_sentence", use_container_width=True):
             st.session_state.sentence_submitted = True
             
-            # Simple validation - just check if verb is present
-            if current_verb.lower() in user_sentence.lower():
+            # Simple validation - check if verb is present
+            if verb_data['german_verb'].lower() in user_sentence.lower():
                 st.success("✅ Great! The verb is used correctly in your sentence.")
+                
+                # Optional: Generate pronunciation for user's sentence
+                col1, col2 = st.columns([1, 1])
+                with col1:
+                    if st.button("🔊 Hear Your Sentence", key="user_sentence_audio"):
+                        with st.spinner("Generating pronunciation..."):
+                            audio_data = generate_audio_with_openai(client, user_sentence)
+                            if audio_data:
+                                st.audio(audio_data, format='audio/mp3')
             else:
-                st.warning(f"⚠️ The verb '{current_verb}' appears to be missing. Try again!")
+                st.warning(f"⚠️ The verb '{verb_data['german_verb']}' appears to be missing. Try again!")
     
     # Next verb button
     if st.session_state.translation_submitted and st.session_state.sentence_submitted:
-        if st.button("Next Verb →", key="next_verb", 
-                    use_container_width=True, 
-                    help="Move to the next verb"):
+        if st.button("Next Verb →", key="next_verb", use_container_width=True):
             # Reset for next verb
-            st.session_state.current_verb = random.choice(list(verbs.keys()))
+            st.session_state.current_verb_data = None
             st.session_state.user_translation = ""
             st.session_state.user_sentence = ""
             st.session_state.translation_submitted = False
             st.session_state.sentence_submitted = False
-            time.sleep(0.5)  # Small delay for better UX
             st.rerun()
     
     st.markdown("</div>", unsafe_allow_html=True)  # Close verb-card
@@ -398,8 +364,8 @@ def main():
     # Footer
     st.markdown("---")
     st.markdown("""
-        <div class="footer">
-            <p>Practice German verbs with visual references and pronunciation training</p>
+        <div style="text-align: center; margin-top: 30px; color: #7f8c8d; font-size: 14px;">
+            <p>🤖 AI-Powered German verb practice with OpenAI integration</p>
             <p>Built with Streamlit • 🇩🇪 Learn German Effectively</p>
         </div>
     """, unsafe_allow_html=True)
