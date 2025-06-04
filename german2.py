@@ -150,6 +150,10 @@ def init_session_state():
         st.session_state.sentence_submitted = False
     if "sentence_evaluation" not in st.session_state:
         st.session_state.sentence_evaluation = None
+    if "user_audio_data" not in st.session_state:
+        st.session_state.user_audio_data = None
+    if "corrected_audio_data" not in st.session_state:
+        st.session_state.corrected_audio_data = None
     if "correct_count" not in st.session_state:
         st.session_state.correct_count = 0
     if "wrong_count" not in st.session_state:
@@ -273,6 +277,8 @@ def main():
             st.session_state.translation_submitted = False
             st.session_state.sentence_submitted = False
             st.session_state.sentence_evaluation = None
+            st.session_state.user_audio_data = None
+            st.session_state.corrected_audio_data = None
             st.session_state.user_translation = ""
             st.session_state.user_sentence = ""
     
@@ -431,22 +437,31 @@ def main():
                         st.markdown("### 🇬🇧 English Translation")
                         st.write(f"*{evaluation['english_translation']}*")
                         
-                        # Audio for corrected sentence
+                        # Audio for user and corrected sentences
+                        st.markdown("### 🔊 Listen to Pronunciations")
                         col1, col2 = st.columns([1, 1])
+                        
                         with col1:
-                            if st.button("🔊 Hear Your Sentence", key="user_sentence_audio"):
+                            if st.button("🔊 Hear Your Sentence", key="user_sentence_audio", use_container_width=True):
                                 with st.spinner("Generating pronunciation..."):
                                     audio_data = generate_audio_with_openai(client, user_sentence)
                                     if audio_data:
-                                        st.audio(audio_data, format='audio/mp3')
+                                        st.audio(audio_data, format='audio/mp3', autoplay=True)
+                                    else:
+                                        st.error("Could not generate audio for your sentence.")
                         
                         with col2:
-                            if evaluation['corrected_sentence'].lower() != user_sentence.lower():
-                                if st.button("🔊 Hear Corrected Version", key="corrected_sentence_audio"):
-                                    with st.spinner("Generating pronunciation..."):
-                                        audio_data = generate_audio_with_openai(client, evaluation['corrected_sentence'])
-                                        if audio_data:
-                                            st.audio(audio_data, format='audio/mp3')
+                            # Always show the corrected version button, even if sentences are the same
+                            sentence_to_play = evaluation['corrected_sentence'] if evaluation['corrected_sentence'].lower() != user_sentence.lower() else user_sentence
+                            button_text = "🔊 Hear Corrected Version" if evaluation['corrected_sentence'].lower() != user_sentence.lower() else "🔊 Hear Sentence Again"
+                            
+                            if st.button(button_text, key="corrected_sentence_audio", use_container_width=True):
+                                with st.spinner("Generating pronunciation..."):
+                                    audio_data = generate_audio_with_openai(client, sentence_to_play)
+                                    if audio_data:
+                                        st.audio(audio_data, format='audio/mp3', autoplay=True)
+                                    else:
+                                        st.error("Could not generate audio for the corrected sentence.")
                     else:
                         st.error("Could not evaluate the sentence. Please try again.")
             else:
@@ -462,6 +477,8 @@ def main():
             st.session_state.translation_submitted = False
             st.session_state.sentence_submitted = False
             st.session_state.sentence_evaluation = None
+            st.session_state.user_audio_data = None
+            st.session_state.corrected_audio_data = None
             st.rerun()
     
     st.markdown("</div>", unsafe_allow_html=True)  # Close verb-card
