@@ -273,16 +273,3 @@ def display_pronunciation_results(analysis, target_sentence, user_transcription)
         if st.button("📚 More Practice", key="more_practice", use_container_width=True):
             st.balloons()
             st.success("Keep up the great work! 🌟")
-
-# Usage: Replace the pronunciation practice section in your main app with:
-"""
-# In your main app, replace the pronunciation practice section with:
-
-if st.session_state.pronunciation_mode and st.session_state.show_recording_interface:
-    target_sentence = st.session_state.target_pronunciation_sentence
-    analysis = enhanced_pronunciation_practice_section(
-        client, target_sentence, st.session_state.difficulty_level
-    )
-    if analysis:
-        st.session_state.pronunciation_analysis = analysis
-"""
