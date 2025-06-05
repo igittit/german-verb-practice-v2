@@ -1,4 +1,6 @@
-# Add this to your existing app, replacing the pronunciation practice section
+# Add these imports at the top of your file
+import time
+import json
 
 def enhanced_pronunciation_practice_section(client, target_sentence, difficulty_level):
     """Enhanced pronunciation practice with multiple recording options"""
@@ -106,7 +108,7 @@ def process_pronunciation_audio(client, uploaded_audio, target_sentence, difficu
     
     with col2:
         if st.button("🔄 Record Again", key="record_again_btn", use_container_width=True):
-            st.experimental_rerun()
+            st.rerun()
     
     if analyze_button:
         return analyze_pronunciation_with_progress(client, uploaded_audio, target_sentence, difficulty_level)
@@ -169,6 +171,114 @@ def analyze_pronunciation_with_progress(client, uploaded_audio, target_sentence,
             st.error(f"❌ An error occurred during analysis: {str(e)}")
             progress_container.empty()
             return None
+
+def transcribe_audio_with_whisper(client, uploaded_audio):
+    """Transcribe audio using OpenAI Whisper"""
+    try:
+        # Reset file pointer to beginning
+        uploaded_audio.seek(0)
+        
+        # Create the transcription
+        transcription = client.audio.transcriptions.create(
+            model="whisper-1",
+            file=uploaded_audio,
+            response_format="text"
+        )
+        
+        return transcription.strip() if transcription else None
+        
+    except Exception as e:
+        st.error(f"Error transcribing audio: {str(e)}")
+        return None
+
+def analyze_pronunciation_with_openai(client, target_sentence, transcription, difficulty_level):
+    """Analyze pronunciation using OpenAI"""
+    try:
+        prompt = f"""
+        Analyze this pronunciation attempt:
+        
+        Target sentence: "{target_sentence}"
+        What the user said: "{transcription}"
+        Difficulty level: {difficulty_level}
+        
+        Please provide a JSON response with:
+        - pronunciation_score: "excellent", "good", "fair", or "needs_improvement"
+        - accuracy_percentage: number from 0-100
+        - words_correct: list of words pronounced correctly
+        - words_incorrect: list of words that need improvement
+        - overall_feedback: encouraging feedback message
+        - specific_feedback: detailed analysis
+        - suggestions: specific tips for improvement
+        
+        Be encouraging and constructive in your feedback.
+        """
+        
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3
+        )
+        
+        # Parse the JSON response
+        analysis_text = response.choices[0].message.content
+        
+        # Try to extract JSON from the response
+        try:
+            # Look for JSON in the response
+            start_idx = analysis_text.find('{')
+            end_idx = analysis_text.rfind('}') + 1
+            
+            if start_idx != -1 and end_idx != -1:
+                json_str = analysis_text[start_idx:end_idx]
+                analysis = json.loads(json_str)
+                return analysis
+            else:
+                # If no JSON found, create a basic response
+                return create_basic_analysis(target_sentence, transcription)
+                
+        except json.JSONDecodeError:
+            # If JSON parsing fails, create a basic response
+            return create_basic_analysis(target_sentence, transcription)
+            
+    except Exception as e:
+        st.error(f"Error analyzing pronunciation: {str(e)}")
+        return None
+
+def create_basic_analysis(target_sentence, transcription):
+    """Create a basic analysis when AI analysis fails"""
+    target_words = target_sentence.lower().split()
+    user_words = transcription.lower().split()
+    
+    # Simple word matching
+    correct_words = []
+    incorrect_words = []
+    
+    for word in target_words:
+        if word in user_words:
+            correct_words.append(word)
+        else:
+            incorrect_words.append(word)
+    
+    accuracy = int((len(correct_words) / len(target_words)) * 100) if target_words else 0
+    
+    if accuracy >= 90:
+        score = "excellent"
+    elif accuracy >= 75:
+        score = "good"
+    elif accuracy >= 50:
+        score = "fair"
+    else:
+        score = "needs_improvement"
+    
+    return {
+        "pronunciation_score": score,
+        "accuracy_percentage": accuracy,
+        "words_correct": correct_words,
+        "words_incorrect": incorrect_words,
+        "overall_feedback": f"You got {accuracy}% of the words right! Keep practicing!",
+        "specific_feedback": "Basic word matching analysis performed.",
+        "suggestions": "Try to speak more clearly and match the target sentence closely."
+    }
 
 def display_pronunciation_results(analysis, target_sentence, user_transcription):
     """Display pronunciation analysis results in an attractive format"""
@@ -262,14 +372,26 @@ def display_pronunciation_results(analysis, target_sentence, user_transcription)
             for key in ['pronunciation_analysis', 'show_recording_interface']:
                 if key in st.session_state:
                     del st.session_state[key]
-            st.experimental_rerun()
+            st.rerun()
     
     with col2:
         if st.button("➡️ Next Verb", key="next_verb_from_pronunciation", use_container_width=True):
             reset_for_new_verb()
-            st.experimental_rerun()
+            st.rerun()
     
     with col3:
         if st.button("📚 More Practice", key="more_practice", use_container_width=True):
             st.balloons()
             st.success("Keep up the great work! 🌟")
+
+def reset_for_new_verb():
+    """Reset session state for a new verb"""
+    keys_to_reset = [
+        'current_verb', 'current_correction', 'current_corrected_audio',
+        'pronunciation_analysis', 'show_recording_interface', 'pronunciation_mode',
+        'target_pronunciation_sentence'
+    ]
+    
+    for key in keys_to_reset:
+        if key in st.session_state:
+            del st.session_state[key]
