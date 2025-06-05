@@ -136,6 +136,76 @@ def generate_audio_with_openai(client, text, language="de"):
         st.error(f"Error generating audio: {e}")
         return None
 
+# Function to transcribe audio using OpenAI Whisper
+def transcribe_audio_with_whisper(client, audio_file):
+    """Transcribe audio using OpenAI's Whisper API"""
+    try:
+        # Reset file pointer to beginning
+        audio_file.seek(0)
+        
+        transcript = client.audio.transcriptions.create(
+            model="whisper-1",
+            file=audio_file,
+            language="de"  # German language
+        )
+        
+        return transcript.text
+        
+    except Exception as e:
+        st.error(f"Error transcribing audio: {e}")
+        return None
+
+# Function to analyze pronunciation using OpenAI
+def analyze_pronunciation_with_openai(client, target_sentence, user_transcription, difficulty_level="beginner"):
+    """Use OpenAI to analyze pronunciation accuracy based on transcription"""
+    
+    prompt = f"""
+    As a German pronunciation teacher, please analyze this pronunciation attempt by a {difficulty_level} level student:
+
+    Target sentence: "{target_sentence}"
+    What the student said (transcribed): "{user_transcription}"
+
+    Please provide your analysis in the following JSON format:
+
+    {{
+        "pronunciation_score": "excellent/good/fair/needs_improvement",
+        "accuracy_percentage": 85,
+        "words_correct": ["word1", "word2"],
+        "words_incorrect": ["word3", "word4"],
+        "specific_feedback": "Detailed feedback about specific pronunciation issues",
+        "suggestions": "Specific suggestions for improvement",
+        "overall_feedback": "Encouraging overall assessment"
+    }}
+
+    Focus on:
+    1. How closely the transcription matches the target
+    2. Common German pronunciation challenges
+    3. Encourage the student while providing constructive feedback
+    4. Consider the difficulty level when evaluating
+    """
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are an experienced German pronunciation teacher. Provide constructive, encouraging feedback while being accurate about pronunciation. Always respond with valid JSON."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=500,
+            temperature=0.3
+        )
+        
+        # Parse the JSON response
+        analysis = json.loads(response.choices[0].message.content)
+        return analysis
+        
+    except json.JSONDecodeError as e:
+        st.error(f"Error parsing pronunciation analysis: {e}")
+        return None
+    except Exception as e:
+        st.error(f"Error analyzing pronunciation: {e}")
+        return None
+
 # Initialize session state
 def init_session_state():
     if "current_verb_data" not in st.session_state:
@@ -162,7 +232,7 @@ def init_session_state():
         st.session_state.difficulty_level = "beginner"
     if "loading" not in st.session_state:
         st.session_state.loading = False
-    # New session state variables to track audio generation
+    # New session state variables to track audio generation and pronunciation
     if "user_audio_generated" not in st.session_state:
         st.session_state.user_audio_generated = False
     if "corrected_audio_generated" not in st.session_state:
@@ -171,6 +241,14 @@ def init_session_state():
         st.session_state.current_user_audio = None
     if "current_corrected_audio" not in st.session_state:
         st.session_state.current_corrected_audio = None
+    if "pronunciation_mode" not in st.session_state:
+        st.session_state.pronunciation_mode = False
+    if "target_pronunciation_sentence" not in st.session_state:
+        st.session_state.target_pronunciation_sentence = ""
+    if "pronunciation_analysis" not in st.session_state:
+        st.session_state.pronunciation_analysis = None
+    if "show_recording_interface" not in st.session_state:
+        st.session_state.show_recording_interface = False
 
 # Function to reset for new verb
 def reset_for_new_verb():
@@ -179,7 +257,8 @@ def reset_for_new_verb():
         'current_verb_data', 'user_translation', 'user_sentence', 
         'translation_submitted', 'sentence_submitted', 'sentence_evaluation',
         'show_audio_buttons', 'user_audio_generated', 'corrected_audio_generated',
-        'current_user_audio', 'current_corrected_audio'
+        'current_user_audio', 'current_corrected_audio', 'pronunciation_mode',
+        'target_pronunciation_sentence', 'pronunciation_analysis', 'show_recording_interface'
     ]
     for key in keys_to_reset:
         if key in st.session_state:
@@ -467,6 +546,170 @@ def main():
                         
     # Show audio buttons if evaluation is complete
     if st.session_state.sentence_evaluation and st.session_state.show_audio_buttons:
+        evaluation = st.session_state.sentence_evaluation
+        user_sentence = st.session_state.user_sentence
+        
+        st.markdown("### 🔊 Listen & Practice")
+        col1, col2 = st.columns([1, 1])
+        
+        with col1:
+            if st.button("🔊 Hear Corrected Version", key="corrected_sentence_audio", use_container_width=True):
+                if not st.session_state.corrected_audio_generated:
+                    with st.spinner("Generating pronunciation..."):
+                        sentence_to_play = evaluation['corrected_sentence'] if evaluation['corrected_sentence'].lower() != user_sentence.lower() else user_sentence
+                        audio_data = generate_audio_with_openai(client, sentence_to_play)
+                        if audio_data:
+                            st.session_state.current_corrected_audio = audio_data
+                            st.session_state.corrected_audio_generated = True
+                        else:
+                            st.error("Could not generate audio for the sentence.")
+                
+                # Display audio if available
+                if st.session_state.current_corrected_audio:
+                    st.audio(st.session_state.current_corrected_audio, format='audio/mp3')
+        
+        with col2:
+            if st.button("🎯 Practice Pronunciation", key="practice_pronunciation", use_container_width=True):
+                st.session_state.pronunciation_mode = True
+                st.session_state.show_recording_interface = True
+                # Set the target sentence (use corrected version if available)
+                target_sentence = evaluation['corrected_sentence'] if evaluation['corrected_sentence'].lower() != user_sentence.lower() else user_sentence
+                st.session_state.target_pronunciation_sentence = target_sentence
+                
+                # Generate audio for the target sentence if not already generated
+                if not st.session_state.corrected_audio_generated:
+                    with st.spinner("Preparing pronunciation practice..."):
+                        audio_data = generate_audio_with_openai(client, target_sentence)
+                        if audio_data:
+                            st.session_state.current_corrected_audio = audio_data
+                            st.session_state.corrected_audio_generated = True
+        
+        # Pronunciation practice interface
+        if st.session_state.pronunciation_mode and st.session_state.show_recording_interface:
+            st.markdown("---")
+            st.markdown("### 🎤 Pronunciation Practice")
+            
+            # Show target sentence
+            st.info(f"**Target sentence:** {st.session_state.target_pronunciation_sentence}")
+            
+            # Play target audio
+            if st.session_state.current_corrected_audio:
+                st.markdown("**🔊 Listen to the correct pronunciation:**")
+                st.audio(st.session_state.current_corrected_audio, format='audio/mp3')
+            
+            st.markdown("**📱 Record your pronunciation:**")
+            st.markdown("""
+            1. Click the button below to start recording
+            2. Say the German sentence clearly
+            3. Upload your recording for AI analysis
+            """)
+            
+            # Audio recording interface
+            uploaded_audio = st.file_uploader(
+                "Record and upload your pronunciation:",
+                type=['wav', 'mp3', 'm4a', 'ogg', 'flac'],
+                key="pronunciation_audio",
+                help="Record yourself saying the German sentence and upload the audio file"
+            )
+            
+            if uploaded_audio is not None:
+                st.success("✅ Audio uploaded successfully!")
+                
+                # Show audio player for user's recording
+                st.markdown("**🎧 Your recording:**")
+                st.audio(uploaded_audio, format='audio/wav')
+                
+                # Analyze pronunciation button
+                if st.button("🤖 Analyze My Pronunciation", key="analyze_pronunciation", use_container_width=True):
+                    with st.spinner("🧠 AI is analyzing your pronunciation..."):
+                        # Transcribe the audio
+                        transcription = transcribe_audio_with_whisper(client, uploaded_audio)
+                        
+                        if transcription:
+                            st.markdown("### 📝 What you said:")
+                            st.write(f"*\"{transcription}\"*")
+                            
+                            # Analyze pronunciation
+                            analysis = analyze_pronunciation_with_openai(
+                                client, 
+                                st.session_state.target_pronunciation_sentence, 
+                                transcription, 
+                                st.session_state.difficulty_level
+                            )
+                            
+                            if analysis:
+                                st.session_state.pronunciation_analysis = analysis
+                                
+                                # Display pronunciation analysis
+                                score_class = analysis['pronunciation_score'].replace(' ', '_')
+                                
+                                st.markdown(f"""
+                                    <div class="evaluation-card {score_class}">
+                                        <h3>🎯 Pronunciation Analysis</h3>
+                                        <p><strong>Score:</strong> {analysis['pronunciation_score'].title()}</p>
+                                        <p><strong>Accuracy:</strong> {analysis.get('accuracy_percentage', 'N/A')}%</p>
+                                    </div>
+                                """, unsafe_allow_html=True)
+                                
+                                # Detailed feedback
+                                col1, col2 = st.columns([1, 1])
+                                
+                                with col1:
+                                    if analysis.get('words_correct'):
+                                        st.markdown("### ✅ Words Pronounced Well:")
+                                        for word in analysis['words_correct']:
+                                            st.markdown(f"- {word}")
+                                
+                                with col2:
+                                    if analysis.get('words_incorrect'):
+                                        st.markdown("### 🎯 Words to Practice:")
+                                        for word in analysis['words_incorrect']:
+                                            st.markdown(f"- {word}")
+                                
+                                # Overall feedback
+                                st.markdown("### 💡 Feedback & Suggestions")
+                                st.write(analysis['overall_feedback'])
+                                
+                                if analysis.get('specific_feedback'):
+                                    st.markdown("**Specific Areas for Improvement:**")
+                                    st.write(analysis['specific_feedback'])
+                                
+                                if analysis.get('suggestions'):
+                                    st.markdown("**Practice Suggestions:**")
+                                    st.write(analysis['suggestions'])
+                                
+                                # Try again button
+                                if st.button("🔄 Try Pronunciation Again", key="try_again_pronunciation"):
+                                    st.session_state.pronunciation_analysis = None
+                                    st.rerun()
+                            
+                            else:
+                                st.error("Could not analyze pronunciation. Please try again.")
+                        else:
+                            st.error("Could not transcribe your audio. Please ensure the recording is clear and try again.")
+            
+            # Instructions for recording
+            with st.expander("📱 How to Record Audio"):
+                st.markdown("""
+                **On Mobile/Tablet:**
+                - Use your device's voice recorder app
+                - Record yourself saying the German sentence
+                - Save as an audio file and upload here
+                
+                **On Computer:**
+                - Use your computer's built-in recorder (Windows Voice Recorder, macOS QuickTime, etc.)
+                - Online tools like [Online Voice Recorder](https://online-voice-recorder.com/)
+                - Record clearly and save as MP3, WAV, or M4A format
+                
+                **Tips for Better Results:**
+                - Speak clearly and at normal speed
+                - Record in a quiet environment
+                - Hold the microphone/device close to your mouth
+                - Try to match the rhythm and intonation of the target audio
+                """)
+    
+    # Original audio buttons section (keep for backward compatibility)
+    elif st.session_state.sentence_evaluation and st.session_state.show_audio_buttons and not st.session_state.pronunciation_mode:
         evaluation = st.session_state.sentence_evaluation
         user_sentence = st.session_state.user_sentence
         
